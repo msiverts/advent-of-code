@@ -7,38 +7,7 @@
 #include <limits.h>
 #include <pthread.h>
 
-int resolveLine(int lineNums[], int numEntries, bool prependMode) {
-	int numDiffs = numEntries - 1;
-	int diffs[numDiffs];
-	bool allZeroes = true;
-	for (int i = 0; i < numDiffs; i++) {
-		int diff = lineNums[i+1] - lineNums[i];	
-		if (diff != 0) {
-			allZeroes = false;
-		}
-		diffs[i] = diff;
-	}
-
-	if (allZeroes) {
-		if (prependMode) {
-			return lineNums[0];
-		} else {
-			return lineNums[numEntries-1];
-		}
-	} else {
-		int nextDiff = resolveLine(diffs, numDiffs, prependMode); 
-
-		if (prependMode) {
-			return lineNums[0] - nextDiff;
-		} else {
-			return lineNums[numEntries-1] + nextDiff; 
-		}
-	}
-}
-
-bool isPipe(char ch) {
-	return ch == '-' || ch == '7' || ch == 'J' || ch == '|' || ch == 'F' || ch == 'L';
-}
+void floodFill(char **mapStencil, int mapWidth, int mapHeight, int x, int y);
 
 bool isValidRight(char ch) {
 	return ch == '-' || ch == '7' || ch == 'J';
@@ -56,14 +25,7 @@ bool isValidDown(char ch) {
 	return ch == '|' || ch == 'J' || ch == 'L';
 }
 
-bool isValidVertical(char ch) {
-	return isValidUp(ch) || isValidDown(ch);
-}
-
-bool isValidHorizontal(char ch) {
-	return isValidLeft(ch) || isValidRight(ch);
-}
-
+//Infer the pipe that connects adjacent pipes if possible
 char figurePipe(char **map, int currentX, int currentY, int mapWidth, int mapHeight) {
 	bool validUp = currentY > 0 && isValidUp(map[currentY-1][currentX]);
 	bool validDown = currentY < (mapHeight-1) && isValidDown(map[currentY+1][currentX]);
@@ -84,23 +46,10 @@ char figurePipe(char **map, int currentX, int currentY, int mapWidth, int mapHei
 		return 'F';
 	}
 
-	//printf("Either a bug or an invalid map\n");
 	return map[currentY][currentX];
 }
 
-
-/*     Doors
- *   JL can go up
- *   7F can go down
- *   L can go left
- *   F
- *
- *   J can go right
- *   7
- */
-
-
-//Need to fix the up/downs here
+//isValid calls seem reversed here, but it's right. It's because they're looking at adjacent spots
 bool shouldMoveUp(char ch, int currentX, int currentY, int lastX, int lastY) {
 	if (isValidDown(ch) && lastY != (currentY - 1)) {
 		return true;
@@ -129,6 +78,8 @@ bool shouldMoveLeft(char ch, int currentX, int currentY, int lastX, int lastY) {
 	return false;
 }
 
+//The stencil should be double the size of the map, we'll fill the pipes on the stencil on even rows/columns
+//Everything else will get marked as '.'
 int exploreTubes(char **map, char **mapStencil, int currentX, int currentY, int mapWidth, int mapHeight) {
 	int lastX = currentX;
 	int lastY = currentY;
@@ -137,42 +88,23 @@ int exploreTubes(char **map, char **mapStencil, int currentX, int currentY, int 
 	char ch = map[currentY][currentX];
 	if (ch == 'S') {
 		ch = figurePipe(map, currentX, currentY, mapWidth, mapHeight);
-		printf("S cell is a %c\n", ch);
 	}
-
 	
 	while (ch != 'S') {
-		//printf("exploreTubes current = (%d, %d), last = (%d, %d)\n", currentX, currentY, lastX, lastY);
 		mapStencil[currentY*2][currentX*2] = ch;	
 		distanceTraveled++;
 
 		int deltaX = 0;
 		int deltaY = 0;
-		/*printf("tube = %c valids = (%d, %d, %d, %d) shoulds = %d, %d, %d, %d\n",
-			ch, 
-			isValidDown(ch),
-			isValidUp(ch),
-			isValidRight(ch),
-			isValidLeft(ch),
-			shouldMoveUp(ch, currentX, currentY, lastX, lastY),
-			shouldMoveDown(ch, currentX, currentY, lastX, lastY),
-			shouldMoveLeft(ch, currentX, currentY, lastX, lastY),
-			shouldMoveRight(ch, currentX, currentY, lastX, lastY));
-			*/
-
 
 		if (shouldMoveUp(ch, currentX, currentY, lastX, lastY)) {
 			deltaY = -1;
-			//printf("Moving up\n");
 		} else if (shouldMoveDown(ch, currentX, currentY, lastX, lastY)) {
 			deltaY = 1;
-			//printf("Moving down\n");
 		} else if (shouldMoveLeft(ch, currentX, currentY, lastX, lastY)) {
 			deltaX = -1;
-			//printf("Moving left\n");
 		} else if (shouldMoveRight(ch, currentX, currentY, lastX, lastY)) {
 			deltaX = 1;
-			//printf("Moving right\n");
 		}
 
 		lastX = currentX;
@@ -187,115 +119,56 @@ int exploreTubes(char **map, char **mapStencil, int currentX, int currentY, int 
 	return distanceTraveled;
 }
 
-
-
-bool canMoveUp(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
-	if (y > 0) {
-		char ch = mapStencil[y-1][x];
-		char nextCh = mapStencil[y-1][x+1];
-		if (ch == '.') {
-			return true;
-		}
-	}
-	return false;
+//if it's a valid location and it hasn't been visited, as indicated by the .
+bool canMoveTo(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
+	return x >= 0 && y >= 0 && x < mapWidth-1 && y < mapHeight && mapStencil[y][x] == '.';  
 }
 
-bool canMoveDown(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
-	if (y < mapHeight-1) {
-		char ch = mapStencil[y+1][x];
-		if (ch == '.') {
-			return true;
-		}
+void maybeFloodFill(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
+	if (canMoveTo(mapStencil, mapWidth, mapHeight, x, y)) {
+		floodFill(mapStencil, mapWidth, mapHeight, x, y);
 	}
-	return false;
 }
 
-bool canMoveLeft(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
-	if (x > 0) {
-		char ch = mapStencil[y][x-1];
-		if (ch == '.') {
-			return true;
-		}
-	}
-	return false;
-}
-
-bool canMoveRight(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
-	if (x < mapWidth-1) {
-		char ch = mapStencil[y][x+1];
-		if (ch == '.') {
-			return true;
-		}
-	}
-	return false;
-}
-
-void floodFill(char **map, char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
+//floodFill from the given location, marking as 0 along the way
+void floodFill(char **mapStencil, int mapWidth, int mapHeight, int x, int y) {
 	if (mapStencil[y][x] == '.') {
 		mapStencil[y][x] = '0';
-	} else {
-	//	mapStencil[y][x] = 'P';
-	}
-	if (canMoveLeft(mapStencil, mapWidth, mapHeight, x, y)) {
-		floodFill(map, mapStencil, mapWidth, mapHeight, x-1, y);
-	}
-	if (canMoveRight(mapStencil, mapWidth, mapHeight, x, y)) {
-		floodFill(map, mapStencil, mapWidth, mapHeight, x+1, y);
-	}
-	if (canMoveUp(mapStencil, mapWidth, mapHeight, x, y)) {
-		if (mapStencil[y-1][x] == 'J' && mapStencil[y-1][x+1] == 'L') {
-			printf("FOUND A DOOR!!!!\n");	
-			y--;
-			char left = mapStencil[y][x];
-			char right = mapStencil[y][x+1];
-			do {
-				y--;
-				left = mapStencil[y][x];
-				right = mapStencil[y][x+1];
-			} while (isValidVertical(left) || isValidVertical(right));
+	} 
 
-			if (!isPipe(left)) {
-				floodFill(map, mapStencil, mapWidth, mapHeight, x, y);
-			} else {
-				floodFill(map, mapStencil, mapWidth, mapHeight, x+1, y);
-			}
-		}
-		floodFill(map, mapStencil, mapWidth, mapHeight, x, y-1);
-	}
-	if (canMoveDown(mapStencil, mapWidth, mapHeight, x, y)) {
-		floodFill(map, mapStencil, mapWidth, mapHeight, x, y+1);
-	}
+	maybeFloodFill(mapStencil, mapWidth, mapHeight, x-1, y);
+	maybeFloodFill(mapStencil, mapWidth, mapHeight, x+1, y);
+	maybeFloodFill(mapStencil, mapWidth, mapHeight, x, y-1);
+	maybeFloodFill(mapStencil, mapWidth, mapHeight, x, y+1);
 }
 
-void findEnclosures(char **map, char **mapStencil, int mapWidth, int mapHeight) {
-	//Go around the edges and floodfill
+//floodFill all around the edges, and anything left as a . is enclosed
+void findEnclosures(char **mapStencil, int mapWidth, int mapHeight) {
 	for (int y = 0; y < mapHeight; y++ )
 	{
 		if (y == 0 || y == mapHeight-1) {
 			for (int x = 0; x < mapWidth-1; x++) {
 				if (mapStencil[y][x] == '.') {
-					floodFill(map, mapStencil, mapWidth, mapHeight, x, y);
+					floodFill(mapStencil, mapWidth, mapHeight, x, y);
 				}
 			}
 			
 		} else {
 			if (mapStencil[y][0] == '.') {
-				floodFill(map, mapStencil, mapWidth, mapHeight, 0, y);
+				floodFill(mapStencil, mapWidth, mapHeight, 0, y);
 			}
 			if (mapStencil[y][mapWidth] == '.') {
-				floodFill(map, mapStencil, mapWidth, mapHeight, mapWidth, y);
+				floodFill(mapStencil, mapWidth, mapHeight, mapWidth, y);
 			}
 		}
 	}
 }
 
+//Since we expanded the map by 2, need to infer the missing pipe pieces
 void inferStencilGaps(char **mapStencil, int stencilWidth, int stencilHeight) {
-	printf("About to infer stencil gaps\n");
 	for (int y = 0; y < stencilHeight; y++) {
 		for (int x = 0; x < stencilWidth; x++) 	{
-			printf("about to try (%d, %d)\n", x, y);
 			mapStencil[y][x] = figurePipe(mapStencil, x, y, stencilWidth, stencilHeight);			
-			printf("(%d, %d) = %c\n", x, y, mapStencil[y][x]);
 		}
 	}
 }
@@ -313,7 +186,6 @@ int countDotsInEvens(char **stencilMap, int maxWidth, int maxHeight) {
 }
 
 int main(int argc, char *argv[]) {
-	printf("argc = %d\n", argc);
 	char *inputFile = "input.txt";
 	if (argc == 2) {
 		inputFile = argv[1];
@@ -351,32 +223,27 @@ int main(int argc, char *argv[]) {
 
 	int stencilWidth = (rowWidth - 1) * 2;
 	int stencilHeight = numRows * 2;
-	printf("stencilHeight = %d\n", stencilHeight);
 	char **mapStencil = (char **)malloc(sizeof(char *) * stencilWidth);
 	for (int i = 0; i < stencilHeight; i++) {
-		printf("Allocating row for %d\n", i);
 		mapStencil[i] = (char *)malloc(stencilWidth);
 		memset(mapStencil[i], '.', stencilWidth);
 		mapStencil[stencilWidth] = 0;
 	}
 
 	long totalDistance = exploreTubes(map, mapStencil, startX, startY, rowWidth, numRows);
+
 	inferStencilGaps(mapStencil, stencilWidth, stencilHeight); 
+	findEnclosures(mapStencil, stencilWidth, stencilHeight);
+
+	for (int y = 0; y < stencilHeight; y+=2) {
+		for (int x = 0; x < stencilWidth; x+= 2) {
+			printf("%c", mapStencil[y][x]);
+		}
+		printf("\n");
+	}
 
 	printf("Total distance = %ld, part 1 answer = %ld\n", totalDistance, totalDistance / 2);
-
-	for (int i = 0; i < stencilHeight; i++) {
-		printf("%s\n", mapStencil[i]);
-	}
-
-	findEnclosures(map, mapStencil, stencilWidth, stencilHeight);
-
-	printf("\n\n");
-	for (int i = 0; i < stencilHeight; i++) {
-		printf("%s\n", mapStencil[i]);
-	}
-
-	printf("numDots = %d\n", countDotsInEvens(mapStencil, stencilWidth, stencilHeight));
+	printf("Part 2 answer numDots = %d\n", countDotsInEvens(mapStencil, stencilWidth, stencilHeight));
 
 	for (int i = 0; i < numRows; i++) {
 		free(map[i]);
