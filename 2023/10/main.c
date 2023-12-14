@@ -64,11 +64,11 @@ bool isValidHorizontal(char ch) {
 	return isValidLeft(ch) || isValidRight(ch);
 }
 
-char figurePipe(char **map, int currentX, int currentY) {
-	bool validUp = isValidUp(map[currentY-1][currentX]);
-	bool validDown = isValidDown(map[currentY+1][currentX]);
-	bool validLeft = isValidLeft(map[currentY][currentX-1]);
-	bool validRight = isValidRight(map[currentY][currentX+1]);
+char figurePipe(char **map, int currentX, int currentY, int mapWidth, int mapHeight) {
+	bool validUp = currentY > 0 && isValidUp(map[currentY-1][currentX]);
+	bool validDown = currentY < (mapHeight-1) && isValidDown(map[currentY+1][currentX]);
+	bool validLeft = currentX > 0 && isValidLeft(map[currentY][currentX-1]);
+	bool validRight = currentX < (mapWidth-1) && isValidRight(map[currentY][currentX+1]);
 
 	if (validUp && validDown) {
 		return '|';
@@ -84,8 +84,8 @@ char figurePipe(char **map, int currentX, int currentY) {
 		return 'F';
 	}
 
-	printf("Either a bug or an invalid map\n");
-	return '.';
+	//printf("Either a bug or an invalid map\n");
+	return map[currentY][currentX];
 }
 
 
@@ -129,21 +129,21 @@ bool shouldMoveLeft(char ch, int currentX, int currentY, int lastX, int lastY) {
 	return false;
 }
 
-int exploreTubes(char **map, char **mapStencil, int currentX, int currentY) {
+int exploreTubes(char **map, char **mapStencil, int currentX, int currentY, int mapWidth, int mapHeight) {
 	int lastX = currentX;
 	int lastY = currentY;
 	int distanceTraveled = 0;
 
 	char ch = map[currentY][currentX];
 	if (ch == 'S') {
-		ch = figurePipe(map, currentX, currentY);
+		ch = figurePipe(map, currentX, currentY, mapWidth, mapHeight);
 		printf("S cell is a %c\n", ch);
 	}
 
 	
 	while (ch != 'S') {
 		//printf("exploreTubes current = (%d, %d), last = (%d, %d)\n", currentX, currentY, lastX, lastY);
-		mapStencil[currentY][currentX] = ch;	
+		mapStencil[currentY*2][currentX*2] = ch;	
 		distanceTraveled++;
 
 		int deltaX = 0;
@@ -289,10 +289,21 @@ void findEnclosures(char **map, char **mapStencil, int mapWidth, int mapHeight) 
 	}
 }
 
-int countDots(char **stencilMap, int maxWidth, int maxHeight) {
+void inferStencilGaps(char **mapStencil, int stencilWidth, int stencilHeight) {
+	printf("About to infer stencil gaps\n");
+	for (int y = 0; y < stencilHeight; y++) {
+		for (int x = 0; x < stencilWidth; x++) 	{
+			printf("about to try (%d, %d)\n", x, y);
+			mapStencil[y][x] = figurePipe(mapStencil, x, y, stencilWidth, stencilHeight);			
+			printf("(%d, %d) = %c\n", x, y, mapStencil[y][x]);
+		}
+	}
+}
+
+int countDotsInEvens(char **stencilMap, int maxWidth, int maxHeight) {
 	int numDots = 0;
-	for (int y = 0; y < maxHeight; y++) {
-		for (int x = 0; x < maxWidth; x++) {
+	for (int y = 0; y < maxHeight; y+=2) {
+		for (int x = 0; x < maxWidth; x+=2) {
 			if (stencilMap[y][x] == '.') {
 				numDots++;
 			}
@@ -337,29 +348,35 @@ int main(int argc, char *argv[]) {
 	} 
 
 	int rowWidth = strlen(map[0]) + 1;
-	char **mapStencil = (char **)malloc(sizeof(char *) * numRows);
-	for (int i = 0; i < numRows; i++) {
-		mapStencil[i] = (char *)malloc(rowWidth);
-		memset(mapStencil[i], '.', rowWidth);
-		mapStencil[rowWidth] = 0;
+
+	int stencilWidth = (rowWidth - 1) * 2;
+	int stencilHeight = numRows * 2;
+	printf("stencilHeight = %d\n", stencilHeight);
+	char **mapStencil = (char **)malloc(sizeof(char *) * stencilWidth);
+	for (int i = 0; i < stencilHeight; i++) {
+		printf("Allocating row for %d\n", i);
+		mapStencil[i] = (char *)malloc(stencilWidth);
+		memset(mapStencil[i], '.', stencilWidth);
+		mapStencil[stencilWidth] = 0;
 	}
 
-	long totalDistance = exploreTubes(map, mapStencil, startX, startY);
+	long totalDistance = exploreTubes(map, mapStencil, startX, startY, rowWidth, numRows);
+	inferStencilGaps(mapStencil, stencilWidth, stencilHeight); 
 
 	printf("Total distance = %ld, part 1 answer = %ld\n", totalDistance, totalDistance / 2);
 
-	for (int i = 0; i < numRows; i++) {
+	for (int i = 0; i < stencilHeight; i++) {
 		printf("%s\n", mapStencil[i]);
 	}
 
-	findEnclosures(map, mapStencil, rowWidth, numRows);
+	findEnclosures(map, mapStencil, stencilWidth, stencilHeight);
 
 	printf("\n\n");
-	for (int i = 0; i < numRows; i++) {
+	for (int i = 0; i < stencilHeight; i++) {
 		printf("%s\n", mapStencil[i]);
 	}
 
-	printf("numDots = %d\n", countDots(mapStencil, rowWidth, numRows));
+	printf("numDots = %d\n", countDotsInEvens(mapStencil, stencilWidth, stencilHeight));
 
 	for (int i = 0; i < numRows; i++) {
 		free(map[i]);
